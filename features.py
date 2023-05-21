@@ -1,5 +1,7 @@
 # %%
-def GD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, init_lamb = 0.1, negative_penalty = 1, adaptive = True):
+
+
+def GD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, init_lamb = 0.1, lamb_left = 0.4, lamb_right = 0.6, negative_penalty = 1, adaptive = True):
     '''
     dataset: (n_samples, n_hiddens): record the activations
     Return:
@@ -30,16 +32,17 @@ def GD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, init_lamb = 0
         # self.feature_emb: (n_features, n_hidden); self.features_of_samples: (n_samples, n_features)
         # Goal: while ensuring columns of self.feature_emb have norm 1, minimize self.config.lamb * L_1(self.features_of_samples) + L2(self.features_of_samples @ self.feature_emb - activations)
             super().__init__()
-            device = activations.device
             self.config = config
             self.lamb = lamb
-            self.feature_emb = nn.Parameter(torch.empty((config.n_features, config.n_hidden), requires_grad=True)).to(device)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.feature_emb = nn.Parameter(torch.empty((config.n_features, config.n_hidden), requires_grad=True).to(device))
             nn.init.xavier_normal_(self.feature_emb)
-            self.features_of_samples = nn.Parameter(torch.zeros((config.n_samples, config.n_features), requires_grad=True)).to(device)
+            self.features_of_samples = nn.Parameter(torch.zeros((config.n_samples, config.n_features), requires_grad=True).to(device))
             nn.init.xavier_normal_(self.features_of_samples, gain = lamb / 0.1)
             # self.features_of_samples = self.features_of_samples * lamb / 0.1
-            self.activations = torch.Tensor(activations)
+            self.activations = activations.clone().detach().to(device)
             self.negative_penalty = config.negative_penalty
+            # now: add feature_emb and features_of_samples to parameters
 
 
         def loss(self):
@@ -60,7 +63,9 @@ def GD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, init_lamb = 0
         # wandb.config.solver_lr = solver_lr
         # wandb.config.solver_steps = solver_steps
         solver = Solver(config, activations=dataset, lamb=solver_lamb)
-        # solver.training()
+        print(solver.activations.shape)
+        # train
+        # solver.to("cuda")
         solver_optimizer = torch.optim.Adam(solver.parameters(), lr=solver_lr)
 
         acc = 0
@@ -84,12 +89,22 @@ def GD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, init_lamb = 0
         sorted = np.flip(np.sort(srt_feats, axis = 1), axis = 1)
         pltarray = np.mean(sorted, axis = 0) #* np.arange(1, 101)
         maxA = pltarray[0]
-        if (solver_lamb > 0.1 * maxA and solver_lamb < 0.4 * maxA) or not adaptive:
+        if (solver_lamb > lamb_left * maxA and solver_lamb < lamb_right * maxA) or not adaptive:
             c_est = solver.loss().item() / maxA / solver_lamb / config.n_samples
-            info = {"loss": solver.loss().item(), "loss_est": c_est, "lamb": solver_lamb, "maxA": maxA}
+            info = {"loss": solver.loss().item(), "loss_est": c_est, "lamb": solver_lamb, "maxA": maxA, "guess_factor": guess_factor, "negative_penalty": negative_penalty, "lr": lr, "steps": steps, "size": dataset.shape[0]}
             return cur_feat, cur_emb, info
         else:
-            solver_lamb = 0.2 * maxA
+            solver_lamb = (lamb_left + lamb_right) / 2 * maxA
+
+def get_feat_top(words, feat, id, num):
+    result = []
+    result_acti = []
+    sorted = feat[:, id].argsort(descending = True)
+    for j in range(num):
+        result.append(words[sorted[j]])
+        result_acti.append(feat[sorted[j], id].item())
+    return result, result_acti
+
 
 def metric_total_acti(feats1):
     import numpy as np
