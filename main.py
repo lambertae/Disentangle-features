@@ -38,8 +38,8 @@ def train(cfg_path):
     version = cfg['version']
     wandb_entity = cfg['wandb_entity']
     wandb_project = cfg['wandb_project']
-    #logger = WandbLogger(name=f'{exp_name}_v{version}', save_dir=save_dir,
-    #                     project=wandb_project, entity=wandb_entity)
+    logger = WandbLogger(name=f'{exp_name}_v{version}', save_dir=save_dir,
+                         project=wandb_project, entity=wandb_entity)
 
     # Callbacks - Checkpointing and early stop
     save_top_k = trainer_cfg.get('save_top_k', 2)
@@ -63,7 +63,7 @@ def train(cfg_path):
 
     trainer = Trainer(accelerator=accelerator,
                       devices=devices,
-                      #logger=logger,
+                      logger=logger,
                       callbacks=[ckpt_cb, earlystop_cb, lr_monitor],
                       limit_train_batches=limit_train_batches,
                       enable_model_summary = enable_model_summary,
