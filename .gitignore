@@ -1,0 +1,5 @@
+# Lightning specific
+lightning_logs/
+
+# Python specific
+__pycache__/

@@ -1,0 +1,53 @@
+exp_name: autoencoder_toydataset
+version: 0
+task: AutoencoderDisentangle
+
+# Seed
+random_seed: 42
+
+# wandb logging config
+wandb_project: disentangle
+wandb_entity: ltao
+
+training:
+  # general
+  batch_size: 1024
+  train_loader_worker: 4
+  accelerator: cpu
+  devices: auto
+
+  # optimizer
+  optimizer: "AdamW"
+  optimizer_cfg:
+    lr: 1.0e-3
+    weight_decay: 0.1
+
+  # Logging config
+  save_dir: /tmp/disentangle
+
+  # Callbacks
+  save_top_k: 2 # checkpointing
+  monitor_metric: Train/epoch_avg_loss
+  monitor_mode: min
+  patience: 1000 # early stop
+
+  # Misc
+  limit_train_batches: 1.0
+  max_epochs: 1000
+
+  # Task specific
+  compute_mmcs: True
+  reg_param: 0.1
+
+dataset:
+  name: PointSphereDataset
+  train_args:
+    num_examples: 5000
+    num_points: 256
+    num_dim: 128
+
+model:
+  name: AutoEncoder
+  args:
+    input_dim: 128
+    hidden_dim: 256
