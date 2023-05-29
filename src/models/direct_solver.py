@@ -19,7 +19,7 @@ class DirectSolver(BaseModel):
 
     def forward(self, x):
         # For this method, you should pass in the entire set of activtions @ once to run SGD on it
-        return self.lamb * torch.norm(self.features_of_samples * (1 + (self.features_of_samples < 0) * self.negative_penalty) * torch.norm(self.feature_emb, dim = 1, p = 2), p=1) + torch.norm(self.features_of_samples @ self.feature_emb - self.activations, p=2) ** 2
+        return self.lamb * torch.norm(self.features_of_samples * (1 + (self.features_of_samples < 0) * self.negative_penalty) * torch.norm(self.feature_emb, dim = 1, p = 2), p=1) + torch.norm(self.features_of_samples @ self.feature_emb - x, p=2) ** 2
     
     def get_learned_features(self):
         return self.feature_emb.T.cpu().detach().numpy()

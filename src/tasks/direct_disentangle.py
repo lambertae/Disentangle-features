@@ -1,4 +1,5 @@
 import torch
+from torch.utils.data import DataLoader
 
 from src.tasks.base_task import BaseTask
 from src.utils import mmcs_fn
@@ -38,3 +39,7 @@ class DirectDisentangle(BaseTask):
         metrics = self._shared_step(batch, 'train')
         self.all_train_metrics.append(metrics)
         return metrics['loss']
+
+    def train_dataloader(self):
+        data_loader = DataLoader(self.train_dataset, shuffle=False, batch_size=self.batch_size, num_workers=self.train_loader_worker)
+        return data_loader

@@ -60,10 +60,12 @@ def train(cfg_path):
     limit_train_batches = trainer_cfg.get('limit_train_batches', 1.0)
     enable_model_summary = trainer_cfg.get('enable_model_summary', False)
     max_epochs = trainer_cfg.get('max_epochs', 100)
+    reload_after_n_epochs = trainer_cfg.get('reload_after_n_epochs', 1)
 
     trainer = Trainer(accelerator=accelerator,
                       devices=devices,
                       logger=logger,
+                      reload_dataloaders_every_n_epochs=reload_after_n_epochs,
                       callbacks=[ckpt_cb, earlystop_cb, lr_monitor],
                       limit_train_batches=limit_train_batches,
                       enable_model_summary = enable_model_summary,
