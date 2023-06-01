@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from features import *
 import os
 #cuda devices
-os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 device = t.device("cuda:0" if t.cuda.is_available() else "cpu")
 print(device)
 
@@ -154,121 +154,46 @@ net = Train_MNIST_net()
 acti, data, target = Generate_MNIST(net)
 print(acti.shape, data.shape, target.shape)
 # %%
-def GD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, init_lamb = 0.1, negative_penalty = 1, adaptive = True):
-    '''
-    dataset: (n_samples, n_hiddens): record the activations
-    Return:
-        cur_feat: (n_samples, n_features): the features of samples
-        cur_emb: (n_features, n_hiddens): the embedding of features
-        info: a dictionary containing loss, loss_est, lamb, maxA
-    '''
-    # dataset: (n_samples, n_hiddens): record the activations 
-    import torch
-    import torch.nn as nn
-    import numpy as np
-    from tqdm import trange
-    from dataclasses import dataclass
-
-    @dataclass
-    class Config:
-        n_features: int
-        n_hidden: int
-        n_samples: int
-        negative_penalty: float
-
-    class Solver(nn.Module):
-
-        def __init__(self, 
-                    config,        
-                    activations, 
-                    lamb):
-        # self.feature_emb: (n_features, n_hidden); self.features_of_samples: (n_samples, n_features)
-        # Goal: while ensuring columns of self.feature_emb have norm 1, minimize self.config.lamb * L_1(self.features_of_samples) + L2(self.features_of_samples @ self.feature_emb - activations)
-            super().__init__()
-            device = activations.device
-            self.config = config
-            self.lamb = lamb
-            self.feature_emb = nn.Parameter(torch.empty((config.n_features, config.n_hidden), requires_grad=True)).to(device)
-            nn.init.xavier_normal_(self.feature_emb)
-            self.features_of_samples = nn.Parameter(torch.zeros((config.n_samples, config.n_features), requires_grad=True)).to(device)
-            nn.init.xavier_normal_(self.features_of_samples, gain = lamb / 0.1)
-            # self.features_of_samples = self.features_of_samples * lamb / 0.1
-            self.activations = torch.Tensor(activations)
-            self.negative_penalty = config.negative_penalty
-
-
-        def loss(self):
-        # if enforce non negative: need to penalize negative weights
-            return self.lamb * torch.norm(self.features_of_samples * (1 + (self.features_of_samples < 0) * self.negative_penalty) * torch.norm(self.feature_emb, dim = 1, p = 2), p=1) + torch.norm(self.features_of_samples @ self.feature_emb - self.activations, p=2) ** 2
-
-    solver_lamb = init_lamb
-    while 1:
-        config = Config(
-            n_features = dataset.shape[1] * guess_factor,
-            n_hidden = dataset.shape[1],
-            n_samples = dataset.shape[0], 
-            negative_penalty = negative_penalty
-        )
-        solver_lr = lr
-        solver_steps = steps
-        # wandb.config.lamb = solver_lamb
-        # wandb.config.solver_lr = solver_lr
-        # wandb.config.solver_steps = solver_steps
-        solver = Solver(config, activations=dataset, lamb=solver_lamb)
-        # solver.training()
-        solver_optimizer = torch.optim.Adam(solver.parameters(), lr=solver_lr)
-
-        acc = 0
-        with trange(solver_steps) as tr:
-            for i in tr:
-                solver_optimizer.zero_grad()
-                loss = solver.loss()
-                loss.backward(retain_graph=True)
-                solver_optimizer.step()
-                # wandb.log({"solver_loss": loss.item()})
-                if i % 100 == 0:
-                    tr.set_postfix(accuracy = acc, loss = loss.item())
-        with torch.inference_mode():
-            solver.eval()
-            solver.features_of_samples *= torch.norm(solver.feature_emb, dim = 1, p = 2)
-            solver.feature_emb /= torch.norm(solver.feature_emb, dim = 1, p = 2)[:, None]
-        cur_feat = solver.features_of_samples.cpu().clone().detach()
-        cur_emb = solver.feature_emb.clone().cpu().detach()
-        
-        srt_feats = abs(cur_feat).cpu().detach().numpy()
-        sorted = np.flip(np.sort(srt_feats, axis = 1), axis = 1)
-        pltarray = np.mean(sorted, axis = 0) #* np.arange(1, 101)
-        maxA = pltarray[0]
-        if (solver_lamb > 0.1 * maxA and solver_lamb < 0.4 * maxA) or not adaptive:
-            c_est = solver.loss().item() / maxA / solver_lamb / config.n_samples
-            info = {"loss": solver.loss().item(), "loss_est": c_est, "lamb": solver_lamb, "maxA": maxA}
-            return cur_feat, cur_emb, info
-        else:
-            solver_lamb = 0.2 * maxA
+from features import *
 samples = 5000
-feat, emb, info1 = GD_solver(acti[:samples], lr = 0.01, steps = 4000, init_lamb = 0.5)
-# %%
+feat, emb, info1 = GD_solver(acti[:samples], lr = 0.01, steps = 10000, init_lamb = 3)
 print(info1)
-feat, emb = condense_features(feat, emb, 0.9)
-print(feat.shape, emb.shape)
+
 # %%
-feat2, emb2, info2 = GD_solver(acti[:samples], lr = 0.01, steps = 4000, init_lamb = 1.04)
+feat2, emb2, info2 = GD_solver(acti[:samples], lr = 0.01, steps = 10000, init_lamb = info1['lamb'])
 feat3, emb3 = intersecting_feats(feat, emb, emb2, 0.9)
 # %%
 # feat, emb = intersecting_feats(feat, emb, emb2, 0.95)
 # feat, emb = condense_features(feat, emb, 0.95)
-# %%# %%
-# save acti, data, target, feat, emb, label
-# import pickle
-# with open('MNIST_data.pkl', 'wb') as f:
-#     pickle.dump((acti, data, target, feat, emb, label), f)
+# keep top
+import random 
 
-# # load acti, data, target, feat, emb, label
-# import pickle
-# with open('MNIST_data.pkl', 'rb') as f:
-#   acti, data, target, feat, emb, label = pickle.load(f)
-# samples = 5000
-# print(target.shape)
+def ablation_zero(feat, nums):
+  feat_top_id = feat.abs().argsort(dim=1)[:, -nums:]
+  feat_top = t.zeros_like(feat).scatter_(1, feat_top_id, 1)
+  result = t.zeros_like(feat)
+  for i in range(feat.shape[0]):
+    result[i] = feat[i] * feat_top[i]
+    if i == 0:
+      print(result[i], feat[i])
+  return result
+
+def ablation_scrubb(feat, nums):
+  feat_top_id = feat.abs().argsort(dim=1)[:, -nums:]
+  feat_top = t.zeros_like(feat).scatter_(1, feat_top_id, 1)
+  result = t.zeros_like(feat)
+  for i in range(feat.shape[0]):    
+    another_id = random.randint(0, feat.shape[0] - 1)
+
+    non_overlap = (1 - feat_top[i]) * (1 - feat_top[another_id])
+    result[i] = feat[i] * (1 - non_overlap) + feat[another_id] * non_overlap
+    # if i == 0:
+      # print(result[i], feat[i])
+  return result
+# print(feat_top3.shape)
+# print(feat_top3[0], feat_top_id[0])
+# %%# %%
+
 import torch
 def result(net, acti):
   net.eval()
@@ -278,13 +203,32 @@ def result(net, acti):
     output = F.log_softmax(output)
     loss = F.nll_loss(output, target[:acti.shape[0]], size_average=True).item()
     pred = output.data.max(1, keepdim=True)[1]
-    correct = pred.eq(target[:acti.shape[0]].data.view_as(pred)).sum()
+    correct = pred.eq(target[:acti.shape[0]].data.view_as(pred)).sum() 
+    print(correct)
+    return correct.item() / len(pred)
     print(f'Avg. loss: {loss:.4f}, Accuracy: {correct}/{len(pred)} ({correct/len(pred)*100:.0f}%)')
-result(net, acti[:samples])
-result(net, feat2[:samples] @ emb2)
-result(net, acti[:samples] * (torch.rand_like(acti[:samples])))
 
-result(net, (feat2[:samples] * (torch.rand_like(feat2[:samples])) )@ emb2)
+import torch.nn.functional as F
+result(net, F.relu(acti[:samples]))
+import matplotlib.pyplot as plt
+scrubb_acti = []
+scrubb_feat = []
+for i in range(1, 5):
+  scrubb_acti.append(result(net, ablation_scrubb(F.relu(acti[:samples]), i)))  
+  scrubb_feat.append(result(net, ablation_scrubb(feat[:samples], i) @ emb))
+plt.plot(scrubb_acti, label = 'acti')
+plt.plot(scrubb_feat, label = 'feat')
+plt.legend()
+# result(net, ablation_scrubb(F.relu(acti[:samples]), 1))
+# result(net, ablation_zero(F.relu(acti[:samples]), 1))
+# result(net, feat[:samples] @ emb)
+# result(net, ablation_scrubb(feat[:samples], 1) @ emb)
+# result(net, ablation_zero(feat[:samples], 1) @ emb)
+# result(net, ablation_zero(feat2[:samples], 1) @ emb2)
+# result(net, feat[:samples] @ emb)
+# result(net, acti[:samples] * (torch.rand_like(acti[:samples])))
+
+# result(net, (feat2[:samples] * (torch.rand_like(feat2[:samples])) )@ emb2)
 
 # %%
 torch.abs((feat2[:samples] @ emb2) - acti[:samples]).mean()
