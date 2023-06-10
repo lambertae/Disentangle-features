@@ -19,7 +19,7 @@ def average_r2(ground_truth, acti, allow_prefix = False):
         sumacti = 0
         
         maxr2 = -100
-        for j in range(ground_truth.shape[1]):
+        for j in range(acti.shape[1]):
             sumacti = sumacti + acti[:, id_list[j][1]]
             maxr2 = max(maxr2, r2(ground_truth[:, i].cpu().numpy(), sumacti.cpu().numpy()))
             if not allow_prefix:

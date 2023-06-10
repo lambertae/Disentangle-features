@@ -59,29 +59,4 @@ for dims in dimrange:
         print(f"Sparsity:{sparsity}, actual:{metric_total_acti(true_feat.cpu())}")
         print(f"MMCS:{mmcs_val}")
 # %%
-import matplotlib.pyplot as plt
-name = ["Autoencoder", "Deep", "GD"]
-value_dict = {"corr_best": r2_best_list, "corr_pref": r2_pref_list, "sparsity": sparsity_list, "mmcs": mmcs_list}
-print(value_dict)
-import pickle
-with open("exp1_compare.pkl", "wb") as f:
-    pickle.dump(value_dict, f)
-
-def plot_figure(values, title):
-    # save 
-    plt.figure(figsize=(12, 6))
-    plt.title(title)
-    plt.xlabel("Dimension")
-    plt.ylabel("Value")
-    plt.xscale("log")
-    plt.xticks(dimrange, dimrange)
-    for i in range(3):
-        plt.plot(dimrange, values[i], label = name[i])
-    plt.legend()
-    plt.savefig(f"exp1_{title}.png")
-    plt.show()
-plot_figure(r2_best_list, "Average best single correlation")
-plot_figure(r2_pref_list, "Average best prefix correlation")
-plot_figure(sparsity_list, "Sparsity")
-plot_figure(mmcs_list, "MMCS")
 # %%
