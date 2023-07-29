@@ -36,3 +36,19 @@ def mmcs(D, F):
     maxv = np.amax(cs, axis=1)
     mmcs = np.mean(maxv)
     return mmcs
+
+
+def norminfty(x):
+    return x.abs().max(dim = 1)[0] + 1e-8
+def normp(p):
+    return lambda x: x.abs().pow(p).sum(dim = 1)
+def norm_ord(x, p):
+    return normp(p)(x)
+def sparse_metric(pw):
+    return lambda feat: (norm_ord(feat, pw) / norminfty(feat) ** pw).mean()
+def sparse_metric_mean(pw):
+    return lambda feat: (norm_ord(feat, pw).mean() / norminfty(feat).mean() ** pw) 
+def sparse_metric_mean_scaled(pw):
+    return lambda feat: (norm_ord(feat, pw).mean() / norminfty(feat).mean() ** pw) * (1 + pw) - pw
+def sparse_metric_scaled(pw):
+    return lambda feat: (norm_ord(feat, pw) / norminfty(feat) ** pw).mean() * (1 + pw) - pw

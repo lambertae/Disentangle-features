@@ -253,6 +253,10 @@ def GD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, init_lamb = 0
             solver_lamb = (lamb_left + lamb_right) / 2 * maxA
 
 def get_feat_top(words, feat, id, num):
+    '''
+    Get the top num words in feat[:, id]
+    Return: a list of words, a list of activations
+    '''
     result = []
     result_acti = []
     sorted = feat[:, id].argsort(descending = True)
@@ -323,3 +327,52 @@ def condense_features(feats, emb, threshold = 0.95):
   result_emb = result_emb / torch.norm(result_emb, dim = 1, keepdim = True)
   return result_feats, result_emb
 # %%
+
+def wrapper(type, name, *args, **kwargs):
+    import json
+    import pickle
+    import os
+    import torch as t
+    
+    if type == "ae":
+        res = AutoEncoder_solver(*args, **kwargs)
+    elif type == "gd":
+        res = GD_solver(*args, **kwargs)
+    else:
+        raise NotImplementedError
+    feat, emb, info = res
+    # save
+    namestr = f"run_{type}_{name}.pkl"
+    config_file = "config.json"
+    # check if config file exists
+    config_dict = dict()
+    if os.path.exists(config_file):
+        with open(config_file, "r") as f:
+            config_dict = json.load(f)
+    # turn args, kwargs into json-serializable, removing tensors
+    args = [str(arg) for arg in args if not isinstance(arg, t.Tensor)]
+    kwargs = {key: str(val) for key, val in kwargs.items() if not isinstance(val, t.Tensor)}
+    config_dict[namestr] = {"args": args, "kwargs": kwargs}
+    with open(config_file, "w") as f:
+        json.dump(config_dict, f)
+    with open(namestr, "wb") as f:
+        pickle.dump((feat, emb, info), f)
+    return res
+# lru_cache import
+from functools import lru_cache
+@lru_cache(maxsize = None)
+def load_wrapper(type, name):
+    import json
+    import pickle
+    namestr = f"run_{type}_{name}.pkl"
+    with open(namestr, "rb") as f:
+        feat, emb, info = pickle.load(f)
+    config_file = "config.json"
+    config_dict = dict()
+    with open(config_file, "r") as f:
+        config_dict = json.load(f)
+    if namestr in config_dict:
+        args = config_dict[namestr]["args"]
+        kwargs = config_dict[namestr]["kwargs"]
+        print("Loaded config: ", args, kwargs)
+    return feat, emb, info
