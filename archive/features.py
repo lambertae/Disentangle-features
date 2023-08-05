@@ -157,7 +157,120 @@ def AutoEncoder_solver(dataset, guess_factor = 8, lr = 2e-3, epochs = 1000, batc
       else:
           solver_lamb = (lamb_left + lamb_right) / 2 * maxA
 
-def GD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, init_lamb = 0.1, lamb_left = 0.4, lamb_right = 0.6, negative_penalty = 1, adaptive = True):
+def SVD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, greedy_step = 100, init_lamb = 0.1, lamb_left = 0.4, lamb_right = 0.6, negative_penalty = 1, adaptive = True, init_feat = None, init_emb = None):
+    '''
+    dataset: (n_samples, n_hiddens): record the activations
+    Return:
+        cur_feat: (n_samples, n_features): the features of samples
+        cur_emb: (n_features, n_hiddens): the embedding of features
+        info: a dictionary containing loss, loss_est, lamb, maxA
+    '''
+    # dataset: (n_samples, n_hiddens): record the activations 
+    import torch
+    import torch.nn as nn
+    import numpy as np
+    from tqdm import trange
+    from dataclasses import dataclass
+
+    # activations: (S, E)
+    # embs: (F, E)
+    # lamb: float
+    # feats: (S, F)
+
+    def greedy_feats(embs, lamb):
+        embs = embs.clone().detach().to(dataset.device)
+        # no grad
+        embs.requires_grad_(False)
+        # norms = torch.norm(embs, dim = 1, p = 2)
+        embs = embs / torch.norm(embs, dim = 1, p = 2)[:, None]
+        ids = torch.arange(dataset.shape[0]).to(dataset.device)
+        feats = torch.zeros((dataset.shape[0], embs.shape[0])).to(dataset.device)
+        remainder = dataset.clone().detach()
+        remainder.requires_grad_(False)
+        eps = 1e-2
+        while ids.shape[0] > 0:
+            # print(ids.shape)
+            dot_prod = torch.einsum("se,fe->sf", remainder, embs) # (Sx, F)
+            max_elts, max_ids = torch.max(dot_prod, dim = 1)
+            mask = max_elts > lamb / 2 + eps
+            if mask.sum() == 0:
+                break
+            remainder = remainder[mask]
+            sel_ids = ids[mask]
+            sel_mxid = max_ids[mask]
+            sel_dot = max_elts[mask] - lamb / 2
+            remainder -= sel_dot[:, None] * embs[sel_mxid, :]
+            feats[sel_ids, sel_mxid] += sel_dot
+            ids = sel_ids
+        # feats = feats / norms[None, :]
+        return feats, embs
+    
+    def construction_loss(feat, embs):
+        return (feat @ (embs / embs.norm(dim = 1, p = 2)[:, None]) - dataset).norm(p = 2) ** 2
+    def total_loss(feat, embs, lamb):
+        return lamb * feat.norm(p = 1).sum() + construction_loss(feat, embs)
+
+    solver_lamb = init_lamb
+    while 1:
+        if init_emb is None:
+            embs = torch.randn((dataset.shape[1] * guess_factor, dataset.shape[1])).to(dataset.device)
+        else:
+            embs = init_emb.clone().detach().to(dataset.device)
+            print("init")
+        if init_feat is None:
+            feats = torch.randn((dataset.shape[0], dataset.shape[1] * guess_factor)).to(dataset.device) * (solver_lamb / 0.1)
+        else:
+            feats = init_feat.clone().detach().to(dataset.device)
+            print("init")
+        feats = feats * embs.norm(dim = 1, p = 2)
+        embs = embs / embs.norm(dim = 1, p = 2)[:, None]
+        # print("init construction loss", construction_loss(feats, embs))
+        # print("init total loss", total_loss(feats, embs, solver_lamb))
+
+        class Solver(nn.Module):
+            def __init__(self, embs):
+                super().__init__()
+                self.embs = nn.Parameter(embs.clone().detach().to(embs.device))
+            def loss(self):
+                return construction_loss(feats, self.embs)
+        solver = Solver(embs)
+        optimizer = torch.optim.Adam(solver.parameters(), lr=lr)
+        
+        with trange(steps) as tr:
+            for i in tr:
+                if i % greedy_step == 0:
+                    feats = greedy_feats(solver.embs.clone().detach(), solver_lamb)[0]
+                optimizer.zero_grad()
+                loss = solver.loss()
+                loss.backward(retain_graph=True)
+                optimizer.step()
+                # wandb.log({"solver_loss": loss.item()})
+                if i % 100 == 0:
+                    rec_loss = construction_loss(feats, solver.embs)
+                    tr.set_postfix(loss = total_loss(feats, solver.embs, solver_lamb).item(), rec_loss = rec_loss.item())
+        
+        with torch.inference_mode():
+            solver.eval()
+            # feats *= torch.norm(solver.embs, dim = 1, p = 2)
+            solver.embs /= torch.norm(solver.embs, dim = 1, p = 2)[:, None]
+        cur_feat = feats.cpu().clone().detach()
+        cur_emb = solver.embs.clone().cpu().detach()
+        
+        srt_feats = abs(cur_feat).cpu().detach().numpy()
+        sorted = np.flip(np.sort(srt_feats, axis = 1), axis = 1)
+        pltarray = np.mean(sorted, axis = 0) #* np.arange(1, 101)
+        maxA = pltarray[0]
+        # print(maxA, solver_lamb)
+        if (solver_lamb > lamb_left * maxA and solver_lamb < lamb_right * maxA) or not adaptive:
+            loss = total_loss(feats, solver.embs, solver_lamb)
+            c_est = loss.item() / maxA / solver_lamb / dataset.shape[0]
+            info = {"loss": loss.item(), "loss_est": c_est, "lamb": solver_lamb, "maxA": maxA, "guess_factor": guess_factor, "negative_penalty": negative_penalty, "lr": lr, "steps": steps, "size": dataset.shape[0]}
+            return cur_feat, cur_emb, info
+        else:
+            solver_lamb = (lamb_left + lamb_right) / 2 * maxA
+
+
+def GD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, init_lamb = 0.1, lamb_left = 0.4, lamb_right = 0.6, negative_penalty = 1, adaptive = True, init_feat = None, init_emb = None):
     '''
     dataset: (n_samples, n_hiddens): record the activations
     Return:
@@ -192,9 +305,15 @@ def GD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, init_lamb = 0
             self.lamb = lamb
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             self.feature_emb = nn.Parameter(torch.empty((config.n_features, config.n_hidden), requires_grad=True).to(device))
-            nn.init.xavier_normal_(self.feature_emb)
+            if init_emb is None:
+                nn.init.xavier_normal_(self.feature_emb)
+            else:
+                self.feature_emb = nn.Parameter(init_emb.clone().detach().to(device))
             self.features_of_samples = nn.Parameter(torch.zeros((config.n_samples, config.n_features), requires_grad=True).to(device))
-            nn.init.xavier_normal_(self.features_of_samples, gain = lamb / 0.1)
+            if init_feat is None:
+                nn.init.xavier_normal_(self.features_of_samples, gain = lamb / 0.1)
+            else:
+                self.features_of_samples = nn.Parameter(init_feat.clone().detach().to(device))
             # self.features_of_samples = self.features_of_samples * lamb / 0.1
             self.activations = activations.clone().detach().to(device)
             self.negative_penalty = config.negative_penalty
@@ -230,10 +349,11 @@ def GD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, init_lamb = 0
                 solver_optimizer.zero_grad()
                 loss = solver.loss()
                 loss.backward(retain_graph=True)
+                rec_loss = torch.norm(solver.features_of_samples @ solver.feature_emb - solver.activations, p=2) ** 2
                 solver_optimizer.step()
                 # wandb.log({"solver_loss": loss.item()})
                 if i % 100 == 0:
-                    tr.set_postfix(accuracy = acc, loss = loss.item())
+                    tr.set_postfix(accuracy = acc, loss = loss.item(), rec_loss = rec_loss.item())
         with torch.inference_mode():
             solver.eval()
             solver.features_of_samples *= torch.norm(solver.feature_emb, dim = 1, p = 2)
@@ -338,12 +458,17 @@ def wrapper(type, name, *args, **kwargs):
         res = AutoEncoder_solver(*args, **kwargs)
     elif type == "gd":
         res = GD_solver(*args, **kwargs)
+    elif type == "svd":
+        res = SVD_solver(*args, **kwargs)
     else:
         raise NotImplementedError
     feat, emb, info = res
     # save
-    namestr = f"run_{type}_{name}.pkl"
-    config_file = "config.json"
+    savedir = "./saved"
+    if not os.path.exists(savedir):
+        os.mkdir(savedir)
+    namestr = f"{savedir}/run_{type}_{name}.pkl"
+    config_file = f"{savedir}/config.json"
     # check if config file exists
     config_dict = dict()
     if os.path.exists(config_file):
@@ -364,10 +489,12 @@ from functools import lru_cache
 def load_wrapper(type, name):
     import json
     import pickle
-    namestr = f"run_{type}_{name}.pkl"
+    import os
+    savedir = "./saved"
+    namestr = f"{savedir}/run_{type}_{name}.pkl"
     with open(namestr, "rb") as f:
         feat, emb, info = pickle.load(f)
-    config_file = "config.json"
+    config_file = f"{savedir}/config.json"
     config_dict = dict()
     with open(config_file, "r") as f:
         config_dict = json.load(f)
