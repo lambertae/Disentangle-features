@@ -245,7 +245,7 @@ def SVD_solver(dataset, guess_factor = 8, lr = 2e-3, steps = 10000, greedy_step 
                 loss.backward(retain_graph=True)
                 optimizer.step()
                 # wandb.log({"solver_loss": loss.item()})
-                if i % 100 == 0:
+                if i % greedy_step == 0:
                     rec_loss = construction_loss(feats, solver.embs)
                     tr.set_postfix(loss = total_loss(feats, solver.embs, solver_lamb).item(), rec_loss = rec_loss.item())
         
